@@ -1,6 +1,10 @@
-# The code shows how to implement Variational Auto-Encoder in Julia
-# MIT license
 
+"""
+Implementacja Variational Auto-Encoder w języku Julia
+MIT License
+"""
+
+#importowanie bibliotek
 using Flux, Random
 using Flux: logitbinarycrossentropy, chunk
 using Flux.Optimise
@@ -9,19 +13,20 @@ using Flux: throttle
 using Statistics
 using Images
 
+#definicja wymiarów wejściowych (x_dim, h_dim), wymiarów przstrzeni ukrytej (z_dim) oraz tablica warstw (layers)
 x_dim = 784
 h_dim = 256
 z_dim = 5
 layers = Array{Dense}(undef, 5)
 
+#parametry uczenia
 batch_size = 100
 sample_size = 10
-data_dir = "<local directory for mnist dataset>"
-project_dir = "<local directory for vae project>"
+data_dir = "C:\\Users\\Łukasz\\III semestr infa\\supervised-learning-julia\\generative models\\data"
+project_dir = "C:\\Users\\Łukasz\\III semestr infa\\supervised-learning-julia\\generative models\\data\\outputs"
 train_data_filename = "train-images.idx3-ubyte"
 
-# Load MNIST training data from local file system. It's to circumvent the situation
-# where downloading MNIST may be rather slow.
+#załadowanie zbioru danych mnist
 function load_images(dir)
     filepath = joinpath(dir, train_data_filename)
     io = IOBuffer(read(filepath))
@@ -32,11 +37,11 @@ function load_images(dir)
 end
 images = load_images(data_dir)
 nobs = size(images, 2)
-# Partition the whole dataset into a group of mini-batches
+
+#podział całego zbioru danych na mniejsze batche
 data = [images[:, i] for i in Iterators.partition(1:nobs, batch_size)]
 
-# Change a mini-batch of data into 2-dimensional gray image 
-# and save the image as a file
+#zapisywanie obrazów
 function save_image(batch_data, filename)
     chunked_data = chunk(batch_data, sample_size)
     im_data = reshape.(chunked_data, 28, :)
@@ -45,38 +50,39 @@ function save_image(batch_data, filename)
     save(image_path, im)
 end
 
-# Take a sample of mini-batch as the reconstruction target 
+#przykład mini-batcha jako reconstruction target 
 sample_data = data[1]
 save_image(sample_data, "mnist_base.png")
 
-# Encoder network
+#inicjalizacja sieci neuronowej i poszczególnych warstw
 layers[1] = Dense(x_dim, h_dim, relu)
 layers[2] = Dense(h_dim, z_dim)
 layers[3] = Dense(h_dim, z_dim)
 
-# Encoder network has branch-out instead of sequential topology 
+#implementacja kodera, przyjmuje dane wejściowe -> przekształca je przez pierwszą warstwę sieci -> zwraca 2 gałęzie wyjściowe - outputy z drugiej i trzeciej warstwy
 function g(x)
     h = layers[1](x)
     return (layers[2](h), layers[3](h))
 end
 
+#funkcja przyjmująca parametry rozkładu normalnego (mu - wartość oczekiwana, logsig - logarytm wariancji), niezbędne w algorytmie vae
 function z(mu, logsig)
     sigma = exp.(logsig / 2)
     return mu + randn(Float32) .* sigma
 end
 
-# Decoder network has sequential topology
+#dekoder - warstwy 4 i 5 tworzą sieć dekodującą, która odbiera wektor z przestrzeni ukrytej i stara się zrekonstruować dane wejściowe
 layers[4] = Dense(z_dim, h_dim, relu)
 layers[5] = Dense(h_dim, x_dim)
 decode(z) = Chain(layers[4], layers[5])(z)
 
-# KL loss
+#KL loss - funkcja obliczająca stratę Kullbacka-Leibera dla rozkładu normalnego, element funkcji straty vae, który zapewnia, że przestrzeń ukryta jest zbliżona do standardowej przestrzeni normalnej
 loss_kl(mu, logsig) = 0.5 * sum(mu .^ 2 + exp.(logsig) - logsig .- 1, dims=1)
 
-# Reconstruction loss
+#Reconstruction loss - funkcja obliczająca stratę rekonstukcji, mierząc jak dobrze zdekodowana próbka odpowiada danym wejściowym
 loss_reconstruct(x, z) = sum(logitbinarycrossentropy.(decode(z), x), dims=1)
 
-# Loss function comprises of KL loss and reconstruction loss
+#całkowita funkcja straty sumująca KL i reconstruction loss
 function loss(x)
     miu, logsig = g(x)
     encoded_z = z(miu, logsig)
@@ -85,7 +91,7 @@ function loss(x)
     mean(kl + rec)
 end
 
-# Reconstruct images given the input sample
+#funkcja reconstruct przyjmuje dane wejściowe x, przepuszcza je przez kodera, a następnie dekoduje uzyskaną przestrzeń ukrytą. Rezultatem jest zrekonstruowany obraz.
 function reconstruct(x)
     miu, logsig = g(x)
     encoded_z = z(miu, logsig)
@@ -93,17 +99,19 @@ function reconstruct(x)
     sigmoid.(decoded_x)
 end
 
+#tutaj tworzony jest optymalizator Adam oraz zbierane są parametry sieci (layers[1:5])
 opt = ADAM()
 ps = Flux.params(layers[1:5]...)
 
-# Compute loss against a random batch every 30 seconds
+# obliczanie funkcji straty na losowej mini-batch danych co 30 sekund w trakcie trenowania modelu. Pozwala to na monitorowanie postępu w trakcie uczenia, pokazując, jak funkcja straty ewoluuje w czasie
 evalcb = throttle(() -> @show(loss(images[:, rand(1:nobs, batch_size)])), 30)
 
+#pętla trenuje model przez 50 epok. Po każdej epoce rekonstruuje próbkę i zapisuje zrekonstruowany obraz
 for epoch in 1:50
     @info "Epoch $epoch"
     train!(loss, ps, zip(data), opt, cb=evalcb)
 
-    # Reconstruct the sample image and save the reconstructed image after each epoch of training
+    #zapisanie przykładowego zrekonstruowanego obrazka po każdej epoce treningu
     decoded_sample = reconstruct(sample_data)
     save_image(decoded_sample, "decode_sample_$epoch.png")
 end
